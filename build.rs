@@ -9,7 +9,10 @@ fn main() {
                 println!("cargo:warning=PROBE {}", line);
             }
             if !e.trim().is_empty() {
-                println!("cargo:warning=PROBE_ERR {}", e.chars().take(800).collect::<String>());
+                println!(
+                    "cargo:warning=PROBE_ERR {}",
+                    e.chars().take(800).collect::<String>()
+                );
             }
         }
         Err(err) => println!("cargo:warning=PROBE_EXEC_FAIL {}", err),
